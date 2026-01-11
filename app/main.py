@@ -1,14 +1,12 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 import logging
 
 from app.database import engine, get_db, Base
 from app.models import Building, Vehicle, AccessLog
 from app.schemas import (
-    BuildingCreate,
-    BuildingResponse,
     VehicleCreate,
     VehicleUpdate,
     VehicleResponse,
@@ -16,14 +14,14 @@ from app.schemas import (
     PlateVerifyResponse,
     AccessLogResponse,
 )
-from app.auth import get_current_building
 from app.alpr_service import alpr_service
+from app.admin import setup_admin
+from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Admin token for building management (set via environment variable)
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "change-me-in-production")
+from app.auth import get_current_building
 
 
 @asynccontextmanager
@@ -36,11 +34,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Parking ALPR Microservice",
-    description="License plate recognition microservice for building parking management. "
-    "Each building has its own API token for authentication.",
+    description="License plate recognition microservice for building parking management.\n\n"
+    "**Admin Panel:** [/admin](/admin) (login: admin/admin)\n\n"
+    "**API Authentication:** Use `X-API-Key` header with the building's API token.",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Add session middleware for admin authentication
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY", "change-me-in-production"),
+)
+
+# Setup SQLAdmin panel
+setup_admin(app, engine)
 
 
 # Health check
@@ -51,107 +59,35 @@ def health_check():
 
 
 # =============================================================================
-# ADMIN ENDPOINTS (for building management)
+# PLATE VERIFICATION
 # =============================================================================
-
-
-def verify_admin_token(token: str = Query(..., alias="admin_token")):
-    """Verify admin token for building management."""
-    if token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-    return True
 
 
 @app.post(
-    "/admin/buildings",
-    response_model=BuildingResponse,
-    status_code=201,
-    tags=["Admin"],
+    "/api/v1/verify-upload",
+    response_model=PlateVerifyResponse,
+    tags=["Verification"],
 )
-def create_building(
-    building_data: BuildingCreate,
-    db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_token),
-):
-    """
-    Create a new building and generate its API token.
-    Requires admin_token query parameter.
-    """
-    building = Building(
-        name=building_data.name,
-        address=building_data.address,
-    )
-    db.add(building)
-    db.commit()
-    db.refresh(building)
-    return building
-
-
-@app.get(
-    "/admin/buildings",
-    response_model=list[BuildingResponse],
-    tags=["Admin"],
-)
-def list_buildings(
-    db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_token),
-):
-    """List all buildings with their API tokens. Requires admin_token."""
-    return db.query(Building).all()
-
-
-@app.post(
-    "/admin/buildings/{building_id}/regenerate-token",
-    response_model=BuildingResponse,
-    tags=["Admin"],
-)
-def regenerate_building_token(
-    building_id: int,
-    db: Session = Depends(get_db),
-    _: bool = Depends(verify_admin_token),
-):
-    """Regenerate API token for a building. Requires admin_token."""
-    from app.models import generate_api_token
-
-    building = db.query(Building).filter(Building.id == building_id).first()
-    if not building:
-        raise HTTPException(status_code=404, detail="Building not found")
-
-    building.api_token = generate_api_token()
-    db.commit()
-    db.refresh(building)
-    return building
-
-
-# =============================================================================
-# PLATE VERIFICATION (requires building API token)
-# =============================================================================
-
-
-@app.post("/api/v1/verify", response_model=PlateVerifyResponse, tags=["Verification"])
-def verify_plate(
-    request: PlateVerifyRequest,
-    db: Session = Depends(get_db),
+async def verify_plate_upload(
+    image: UploadFile = File(..., description="Image file containing license plate"),
     building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
 ):
     """
-    Verify if a vehicle is authorized to enter the building.
+    Detect and read license plate from uploaded image.
 
-    Requires X-API-Key header with building's API token.
+    **Use this endpoint to test from Swagger UI** - just upload an image file.
+
+    Requires `X-API-Key` header with the building's API token.
     """
-    # Recognize license plate
-    result = alpr_service.recognize_from_base64(request.image_base64)
+    import base64
+
+    contents = await image.read()
+    image_base64 = base64.b64encode(contents).decode()
+
+    result = alpr_service.recognize_from_base64(image_base64)
 
     if not result.success:
-        log_entry = AccessLog(
-            building_id=building.id,
-            license_plate="UNREADABLE",
-            is_authorized=False,
-            confidence=None,
-        )
-        db.add(log_entry)
-        db.commit()
-
         return PlateVerifyResponse(
             license_plate=None,
             is_authorized=False,
@@ -167,59 +103,125 @@ def verify_plate(
             message="No license plate detected in the image",
         )
 
-    # Check if vehicle is authorized FOR THIS BUILDING
+    # Check if vehicle is authorized for this building
+    plate = result.text.upper().replace(" ", "")
     vehicle = (
         db.query(Vehicle)
         .filter(
             Vehicle.building_id == building.id,
-            Vehicle.license_plate == result.text,
+            Vehicle.license_plate == plate,
             Vehicle.is_active == True,
         )
         .first()
     )
 
-    # Log access attempt
-    log_entry = AccessLog(
+    is_authorized = vehicle is not None
+
+    # Log the access attempt
+    access_log = AccessLog(
         building_id=building.id,
-        license_plate=result.text,
-        is_authorized=vehicle is not None,
+        license_plate=plate,
+        is_authorized=is_authorized,
         confidence=result.confidence,
     )
-    db.add(log_entry)
+    db.add(access_log)
     db.commit()
 
-    if vehicle:
-        return PlateVerifyResponse(
-            license_plate=result.text,
-            is_authorized=True,
-            confidence=result.confidence,
-            owner_name=vehicle.owner_name,
-            apartment=vehicle.apartment,
-            message="Vehicle authorized",
-        )
+    if is_authorized:
+        message = f"Vehicle authorized - Owner: {vehicle.owner_name}, Apt: {vehicle.apartment}"
     else:
+        message = "Vehicle not authorized for this building"
+
+    return PlateVerifyResponse(
+        license_plate=plate,
+        is_authorized=is_authorized,
+        confidence=result.confidence,
+        message=message,
+    )
+
+
+@app.post("/api/v1/verify", response_model=PlateVerifyResponse, tags=["Verification"])
+def verify_plate(
+    request: PlateVerifyRequest,
+    building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
+):
+    """
+    Detect license plate from base64 encoded image.
+
+    For programmatic use. Use /verify-upload for testing in Swagger UI.
+
+    Requires `X-API-Key` header with the building's API token.
+    """
+    result = alpr_service.recognize_from_base64(request.image_base64)
+
+    if not result.success:
         return PlateVerifyResponse(
-            license_plate=result.text,
+            license_plate=None,
+            is_authorized=False,
+            confidence=None,
+            message=f"Failed to read license plate: {result.error}",
+        )
+
+    if not result.text:
+        return PlateVerifyResponse(
+            license_plate=None,
             is_authorized=False,
             confidence=result.confidence,
-            message="Vehicle not authorized for this building",
+            message="No license plate detected in the image",
         )
+
+    # Check if vehicle is authorized for this building
+    plate = result.text.upper().replace(" ", "")
+    vehicle = (
+        db.query(Vehicle)
+        .filter(
+            Vehicle.building_id == building.id,
+            Vehicle.license_plate == plate,
+            Vehicle.is_active == True,
+        )
+        .first()
+    )
+
+    is_authorized = vehicle is not None
+
+    # Log the access attempt
+    access_log = AccessLog(
+        building_id=building.id,
+        license_plate=plate,
+        is_authorized=is_authorized,
+        confidence=result.confidence,
+    )
+    db.add(access_log)
+    db.commit()
+
+    if is_authorized:
+        message = f"Vehicle authorized - Owner: {vehicle.owner_name}, Apt: {vehicle.apartment}"
+    else:
+        message = "Vehicle not authorized for this building"
+
+    return PlateVerifyResponse(
+        license_plate=plate,
+        is_authorized=is_authorized,
+        confidence=result.confidence,
+        message=message,
+    )
 
 
 # =============================================================================
-# VEHICLE MANAGEMENT (requires building API token)
+# VEHICLE MANAGEMENT
 # =============================================================================
 
 
 @app.get("/api/v1/vehicles", response_model=list[VehicleResponse], tags=["Vehicles"])
 def list_vehicles(
+    building: Building = Depends(get_current_building),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     active_only: bool = Query(True),
     db: Session = Depends(get_db),
-    building: Building = Depends(get_current_building),
 ):
-    """List all vehicles registered for this building."""
+    """List all vehicles registered for the authenticated building."""
     query = db.query(Vehicle).filter(Vehicle.building_id == building.id)
     if active_only:
         query = query.filter(Vehicle.is_active == True)
@@ -233,8 +235,8 @@ def list_vehicles(
 )
 def get_vehicle(
     license_plate: str,
-    db: Session = Depends(get_db),
     building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
 ):
     """Get a specific vehicle by license plate."""
     vehicle = (
@@ -258,10 +260,10 @@ def get_vehicle(
 )
 def create_vehicle(
     vehicle_data: VehicleCreate,
-    db: Session = Depends(get_db),
     building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
 ):
-    """Register a new authorized vehicle for this building."""
+    """Register a new authorized vehicle for the authenticated building."""
     license_plate = vehicle_data.license_plate.upper().replace(" ", "")
 
     # Check if already exists in this building
@@ -303,8 +305,8 @@ def create_vehicle(
 def update_vehicle(
     license_plate: str,
     vehicle_data: VehicleUpdate,
-    db: Session = Depends(get_db),
     building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
 ):
     """Update an existing vehicle."""
     vehicle = (
@@ -330,8 +332,8 @@ def update_vehicle(
 @app.delete("/api/v1/vehicles/{license_plate}", tags=["Vehicles"])
 def delete_vehicle(
     license_plate: str,
-    db: Session = Depends(get_db),
     building: Building = Depends(get_current_building),
+    db: Session = Depends(get_db),
 ):
     """Deactivate a vehicle (soft delete)."""
     vehicle = (
@@ -351,19 +353,19 @@ def delete_vehicle(
 
 
 # =============================================================================
-# ACCESS LOGS (requires building API token)
+# ACCESS LOGS
 # =============================================================================
 
 
 @app.get("/api/v1/logs", response_model=list[AccessLogResponse], tags=["Access Logs"])
 def list_access_logs(
+    building: Building = Depends(get_current_building),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     authorized_only: bool | None = Query(None),
     db: Session = Depends(get_db),
-    building: Building = Depends(get_current_building),
 ):
-    """List access logs for this building."""
+    """List access logs for the authenticated building."""
     query = db.query(AccessLog).filter(AccessLog.building_id == building.id)
     if authorized_only is not None:
         query = query.filter(AccessLog.is_authorized == authorized_only)
@@ -377,11 +379,11 @@ def list_access_logs(
 )
 def get_vehicle_logs(
     license_plate: str,
+    building: Building = Depends(get_current_building),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
-    building: Building = Depends(get_current_building),
 ):
-    """Get access logs for a specific vehicle in this building."""
+    """Get access logs for a specific vehicle in the authenticated building."""
     return (
         db.query(AccessLog)
         .filter(

@@ -4,7 +4,8 @@ A license plate recognition microservice for building parking management. Uses A
 
 ## Features
 
-- **Automatic License Plate Recognition (ALPR)** - AI-powered plate detection and OCR
+- **Automatic License Plate Recognition (ALPR)** - AI-powered plate detection using YOLO + OCR
+- **Admin Panel** - Web-based admin interface powered by SQLAdmin
 - **Multi-tenant Architecture** - Each building has its own API token and isolated data
 - **Vehicle Management** - Register, update, and deactivate authorized vehicles
 - **Access Logging** - Complete history of all access attempts
@@ -25,8 +26,8 @@ A license plate recognition microservice for building parking management. Uses A
 │         │                                        │          │
 │         ▼                                        ▼          │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │                  Authentication                      │   │
-│  │  Admin Token (building mgmt) │ API Key (per building)│   │
+│  │                    SQLAdmin Panel                    │   │
+│  │         Manage Buildings, Vehicles, Logs            │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -34,23 +35,128 @@ A license plate recognition microservice for building parking management. Uses A
 
 ## Quick Start
 
-### Using Docker (Recommended)
+### 1. Clone and configure
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/avarajar/parking-alpr.git
 cd parking-alpr
+
+# Copy environment file
+cp .env.example .env
+
+# Edit .env with your settings (optional for development)
 ```
 
-2. Build and start:
+### 2. Build and start
+
 ```bash
 make build
 make up
 ```
 
-3. Access the API at `http://localhost:8000`
+### 3. Access the services
 
-### Makefile Commands
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Admin Panel** | http://localhost:8000/admin/ | admin / admin |
+| **API Docs (Swagger)** | http://localhost:8000/docs | - |
+| **API Docs (ReDoc)** | http://localhost:8000/redoc | - |
+| **Health Check** | http://localhost:8000/health | - |
+
+## Testing Guide
+
+### Step 1: Create a Building (Admin Panel)
+
+1. Go to http://localhost:8000/admin/
+2. Login with `admin` / `admin`
+3. Click on **Buildings** in the sidebar
+4. Click **+ Create**
+5. Fill in the building name and address
+6. Click **Save**
+7. **Copy the API Token** from the building list (you'll need this for API calls)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Buildings                                                   │
+│  ┌─────┬────────────┬─────────────────────────────┬────────┐│
+│  │ ID  │ Name       │ API Token                   │ Active ││
+│  ├─────┼────────────┼─────────────────────────────┼────────┤│
+│  │ 1   │ Tower A    │ a1b2c3d4e5f6g7h8i9j0... ← Copy this  ││
+│  └─────┴────────────┴─────────────────────────────┴────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Step 2: Register a Vehicle (Admin Panel or Swagger)
+
+**Option A: Using Admin Panel**
+1. Click on **Vehicles** in the sidebar
+2. Click **+ Create**
+3. Select the building, enter license plate, owner name, apartment
+4. Click **Save**
+
+**Option B: Using Swagger UI**
+1. Go to http://localhost:8000/docs
+2. Click the **Authorize** button (lock icon at top right)
+3. Enter your API token in the `X-API-Key` field
+4. Click **Authorize**, then **Close**
+5. Find `POST /api/v1/vehicles` and click **Try it out**
+6. Enter the vehicle data and click **Execute**
+
+### Step 3: Test Plate Verification (Swagger UI)
+
+1. Go to http://localhost:8000/docs
+2. Make sure you're authorized (Step 2, Option B)
+3. Find `POST /api/v1/verify-upload`
+4. Click **Try it out**
+5. Upload an image with a license plate
+6. Click **Execute**
+
+**Response for authorized vehicle:**
+```json
+{
+  "license_plate": "ABC123",
+  "is_authorized": true,
+  "confidence": 95,
+  "message": "Vehicle authorized - Owner: John Doe, Apt: 101"
+}
+```
+
+**Response for unauthorized vehicle:**
+```json
+{
+  "license_plate": "XYZ789",
+  "is_authorized": false,
+  "confidence": 92,
+  "message": "Vehicle not authorized for this building"
+}
+```
+
+### Step 4: View Access Logs
+
+**Option A: Admin Panel**
+- Click on **Access Logs** in the sidebar to see all access attempts
+
+**Option B: Swagger UI**
+- Use `GET /api/v1/logs` to see logs for your building
+
+## Environment Variables
+
+All configuration is done via the `.env` file:
+
+```bash
+# Database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=parking_db
+DATABASE_URL=postgresql://postgres:postgres@db:5432/parking_db
+
+# Admin Panel
+ADMIN_USER=admin
+ADMIN_PASSWORD=change-me-in-production
+SECRET_KEY=change-me-in-production-use-random-string
+```
+
+## Makefile Commands
 
 ```bash
 make help           # Show all available commands
@@ -64,223 +170,106 @@ make shell          # Open shell in API container
 make db-shell       # Open PostgreSQL shell
 make clean          # Remove containers and volumes
 make health         # Check API health
-make create-building  # Create a test building
-make list-buildings   # List all buildings
 ```
 
-### Local Development (without Docker)
+## Admin Panel
 
-1. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-.\venv\Scripts\activate   # Windows
+The admin panel is available at `/admin/` and provides a web interface to manage:
+
+- **Buildings** - Create buildings and view their API tokens
+- **Vehicles** - Register and manage authorized vehicles
+- **Access Logs** - View history of all access attempts (read-only)
+
+### Screenshots
+
 ```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Start PostgreSQL (or use Docker):
-```bash
-docker run -d --name parking-db \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=parking_db \
-  -p 5432:5432 \
-  postgres:16-alpine
-```
-
-4. Run the application:
-```bash
-uvicorn app.main:app --reload
-```
-
-## API Documentation
-
-Once running, access the interactive documentation:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## Authentication
-
-The API uses two levels of authentication:
-
-### Admin Token
-Used for building management operations. Pass as query parameter:
-```
-?admin_token=your-admin-token
-```
-
-### Building API Key
-Each building receives a unique API token. Pass in the header:
-```
-X-API-Key: building-api-token
+┌─────────────────────────────────────────────────────────────┐
+│  Parking ALPR Admin                    [Buildings ▼]        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Buildings                                                   │
+│  ┌─────┬────────────┬─────────────────────┬────────┐        │
+│  │ ID  │ Name       │ API Token           │ Active │        │
+│  ├─────┼────────────┼─────────────────────┼────────┤        │
+│  │ 1   │ Tower A    │ abc123xyz...        │ ✓      │        │
+│  │ 2   │ Tower B    │ def456uvw...        │ ✓      │        │
+│  └─────┴────────────┴─────────────────────┴────────┘        │
+│                                                              │
+│  [+ Create]                                                  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## API Endpoints
 
-### Health Check
-
-```http
-GET /health
-```
-
-Returns service status. No authentication required.
-
----
-
-### Admin Endpoints
-
-#### Create a Building
-```http
-POST /admin/buildings?admin_token=xxx
-Content-Type: application/json
-
-{
-  "name": "Tower A",
-  "address": "123 Main Street"
-}
-```
-
-Response:
-```json
-{
-  "id": 1,
-  "name": "Tower A",
-  "address": "123 Main Street",
-  "api_token": "abc123...",
-  "is_active": true,
-  "created_at": "2025-01-11T10:00:00Z"
-}
-```
-
-#### List All Buildings
-```http
-GET /admin/buildings?admin_token=xxx
-```
-
-#### Regenerate Building Token
-```http
-POST /admin/buildings/{building_id}/regenerate-token?admin_token=xxx
-```
-
----
+All `/api/v1/*` endpoints require authentication via the `X-API-Key` header with the building's API token.
 
 ### Plate Verification
 
-#### Verify a License Plate
+#### Verify with Image Upload (Swagger UI friendly)
+```http
+POST /api/v1/verify-upload
+Content-Type: multipart/form-data
+X-API-Key: <building-api-token>
+
+[Upload image file directly]
+```
+
+**This is the easiest way to test** - go to http://localhost:8000/docs, find this endpoint, click "Try it out", add the X-API-Key header, and upload an image.
+
+#### Verify with Base64 (for programmatic use)
 ```http
 POST /api/v1/verify
-X-API-Key: building-api-token
 Content-Type: application/json
+X-API-Key: <building-api-token>
 
 {
   "image_base64": "base64-encoded-image-data"
 }
 ```
 
-Response (Authorized):
+**Response (authorized vehicle):**
 ```json
 {
   "license_plate": "ABC123",
   "is_authorized": true,
   "confidence": 95,
-  "owner_name": "John Doe",
-  "apartment": "101A",
-  "message": "Vehicle authorized"
+  "message": "Vehicle authorized - Owner: John Doe, Apt: 101"
 }
 ```
 
-Response (Not Authorized):
+**Response (unauthorized vehicle):**
 ```json
 {
   "license_plate": "XYZ789",
   "is_authorized": false,
   "confidence": 92,
-  "owner_name": null,
-  "apartment": null,
   "message": "Vehicle not authorized for this building"
 }
 ```
 
----
+### Building Management
 
-### Vehicle Management
+Buildings are managed through the **Admin Panel** at http://localhost:8000/admin/
 
-#### List Vehicles
+- Login with `admin` / `admin`
+- Click on **Buildings** to create, edit, or view API tokens
+
+### Vehicle Management (requires X-API-Key)
+
 ```http
-GET /api/v1/vehicles
-X-API-Key: building-api-token
+GET    /api/v1/vehicles              # List vehicles for authenticated building
+POST   /api/v1/vehicles              # Register vehicle
+GET    /api/v1/vehicles/{plate}      # Get vehicle
+PUT    /api/v1/vehicles/{plate}      # Update vehicle
+DELETE /api/v1/vehicles/{plate}      # Deactivate vehicle
 ```
 
-Query parameters:
-- `skip` (int): Pagination offset (default: 0)
-- `limit` (int): Max results (default: 100, max: 1000)
-- `active_only` (bool): Only active vehicles (default: true)
+### Access Logs (requires X-API-Key)
 
-#### Get Vehicle by Plate
 ```http
-GET /api/v1/vehicles/{license_plate}
-X-API-Key: building-api-token
-```
-
-#### Register a Vehicle
-```http
-POST /api/v1/vehicles
-X-API-Key: building-api-token
-Content-Type: application/json
-
-{
-  "license_plate": "ABC123",
-  "owner_name": "John Doe",
-  "apartment": "101A",
-  "phone": "+1234567890",
-  "vehicle_type": "car",
-  "vehicle_brand": "Toyota",
-  "vehicle_color": "black"
-}
-```
-
-#### Update a Vehicle
-```http
-PUT /api/v1/vehicles/{license_plate}
-X-API-Key: building-api-token
-Content-Type: application/json
-
-{
-  "apartment": "102B",
-  "phone": "+0987654321"
-}
-```
-
-#### Deactivate a Vehicle
-```http
-DELETE /api/v1/vehicles/{license_plate}
-X-API-Key: building-api-token
-```
-
----
-
-### Access Logs
-
-#### List Access Logs
-```http
-GET /api/v1/logs
-X-API-Key: building-api-token
-```
-
-Query parameters:
-- `skip` (int): Pagination offset
-- `limit` (int): Max results (default: 100)
-- `authorized_only` (bool): Filter by authorization status
-
-#### Get Logs for a Vehicle
-```http
-GET /api/v1/logs/{license_plate}
-X-API-Key: building-api-token
+GET /api/v1/logs                     # List access logs for authenticated building
+GET /api/v1/logs/{plate}             # Get vehicle logs
 ```
 
 ## Usage Examples
@@ -292,7 +281,9 @@ import requests
 import base64
 
 API_URL = "http://localhost:8000"
-API_KEY = "your-building-api-token"
+API_KEY = "your-building-api-token"  # Get this from admin panel
+
+headers = {"X-API-Key": API_KEY}
 
 # Read and encode image
 with open("plate.jpg", "rb") as f:
@@ -301,96 +292,71 @@ with open("plate.jpg", "rb") as f:
 # Verify plate
 response = requests.post(
     f"{API_URL}/api/v1/verify",
-    headers={"X-API-Key": API_KEY},
+    headers=headers,
     json={"image_base64": image_base64}
 )
 
 result = response.json()
-if result["is_authorized"]:
-    print(f"Welcome, {result['owner_name']}!")
-else:
-    print(f"Vehicle {result['license_plate']} not authorized")
+print(f"Plate: {result['license_plate']}")
+print(f"Authorized: {result['is_authorized']}")
+print(f"Confidence: {result['confidence']}%")
 ```
 
 ### cURL
 
 ```bash
-# Create a building (admin)
-curl -X POST "http://localhost:8000/admin/buildings?admin_token=your-admin-token" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Tower A", "address": "123 Main St"}'
+# First, create a building in the Admin Panel and copy the API token
+# Then use it for all API calls:
+API_KEY="your-building-api-token"
 
 # Register a vehicle
 curl -X POST http://localhost:8000/api/v1/vehicles \
-  -H "X-API-Key: building-token" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"license_plate": "ABC123", "owner_name": "John Doe", "apartment": "101"}'
 
-# Verify a plate (with base64 image)
-curl -X POST http://localhost:8000/api/v1/verify \
-  -H "X-API-Key: building-token" \
-  -H "Content-Type: application/json" \
-  -d '{"image_base64": "'$(base64 -i plate.jpg)'"}'
-```
+# Verify a plate (upload image)
+curl -X POST http://localhost:8000/api/v1/verify-upload \
+  -H "X-API-Key: $API_KEY" \
+  -F "image=@plate.jpg"
 
-### JavaScript/Node.js
+# List all vehicles
+curl http://localhost:8000/api/v1/vehicles \
+  -H "X-API-Key: $API_KEY"
 
-```javascript
-const fs = require('fs');
-
-const API_URL = 'http://localhost:8000';
-const API_KEY = 'your-building-api-token';
-
-// Read and encode image
-const imageBuffer = fs.readFileSync('plate.jpg');
-const imageBase64 = imageBuffer.toString('base64');
-
-// Verify plate
-fetch(`${API_URL}/api/v1/verify`, {
-  method: 'POST',
-  headers: {
-    'X-API-Key': API_KEY,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({ image_base64: imageBase64 })
-})
-  .then(res => res.json())
-  .then(result => {
-    if (result.is_authorized) {
-      console.log(`Welcome, ${result.owner_name}!`);
-    } else {
-      console.log(`Vehicle ${result.license_plate} not authorized`);
-    }
-  });
+# View access logs
+curl http://localhost:8000/api/v1/logs \
+  -H "X-API-Key: $API_KEY"
 ```
 
 ## Project Structure
 
 ```
-reconocimiento-placas/
+parking-alpr/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py           # FastAPI application and endpoints
-│   ├── auth.py           # Authentication logic
+│   ├── admin.py          # SQLAdmin configuration
+│   ├── auth.py           # Authentication logic (TODO)
 │   ├── alpr_service.py   # License plate recognition service
 │   ├── database.py       # Database connection and session
 │   ├── models.py         # SQLAlchemy models
 │   └── schemas.py        # Pydantic schemas
 ├── tests/
-│   ├── __init__.py
 │   ├── conftest.py       # Pytest fixtures
-│   ├── test_health.py    # Health endpoint tests
-│   ├── test_admin.py     # Admin endpoints tests
-│   ├── test_vehicles.py  # Vehicle CRUD tests
-│   ├── test_verify.py    # Plate verification tests
-│   ├── test_logs.py      # Access logs tests
-│   ├── test_auth.py      # Authentication tests
-│   └── test_alpr_service.py  # ALPR service tests
+│   ├── test_health.py
+│   ├── test_admin.py
+│   ├── test_vehicles.py
+│   ├── test_verify.py
+│   ├── test_logs.py
+│   ├── test_auth.py
+│   └── test_alpr_service.py
+├── .env                  # Environment variables (create from .env.example)
 ├── .env.example          # Environment variables template
 ├── .gitignore
-├── pytest.ini            # Pytest configuration
-├── requirements.txt      # Python dependencies
-├── Makefile              # Development commands
+├── pytest.ini
+├── requirements.txt
+├── Makefile
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
@@ -398,66 +364,16 @@ reconocimiento-placas/
 
 ## Testing
 
-The project includes a comprehensive test suite using pytest.
-
-### Running Tests
-
 ```bash
-# Install dependencies (includes test dependencies)
-pip install -r requirements.txt
-
 # Run all tests
-pytest
+make test
 
-# Run with verbose output
-pytest -v
-
-# Run with coverage report
-pytest --cov=app --cov-report=html
+# Run with coverage
+make test-cov
 
 # Run specific test file
-pytest tests/test_vehicles.py
-
-# Run specific test class
-pytest tests/test_vehicles.py::TestCreateVehicle
-
-# Run specific test
-pytest tests/test_vehicles.py::TestCreateVehicle::test_create_vehicle_success
+docker-compose run --rm api pytest tests/test_vehicles.py -v
 ```
-
-### Test Coverage
-
-```bash
-# Generate HTML coverage report
-pytest --cov=app --cov-report=html
-
-# View report
-open htmlcov/index.html  # macOS
-xdg-open htmlcov/index.html  # Linux
-```
-
-### Test Categories
-
-| Test File | Description | Tests |
-|-----------|-------------|-------|
-| `test_health.py` | Health check endpoint | 1 |
-| `test_admin.py` | Building management (create, list, regenerate token) | 9 |
-| `test_vehicles.py` | Vehicle CRUD operations | 18 |
-| `test_verify.py` | License plate verification | 7 |
-| `test_logs.py` | Access logs retrieval | 9 |
-| `test_auth.py` | Authentication and multi-tenant isolation | 7 |
-| `test_alpr_service.py` | ALPR service unit tests | 12 |
-
-### Test Database
-
-Tests use an in-memory SQLite database, so no external database is required. Each test runs in isolation with a fresh database.
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/parking_db` |
-| `ADMIN_TOKEN` | Token for admin operations | `change-me-in-production` |
 
 ## Database Schema
 
@@ -467,7 +383,7 @@ Tests use an in-memory SQLite database, so no external database is required. Eac
 | id | Integer | Primary key |
 | name | String(100) | Building name |
 | address | String(255) | Building address |
-| api_token | String(64) | Unique API token |
+| api_token | String(64) | Unique API token (auto-generated) |
 | is_active | Boolean | Active status |
 | created_at | DateTime | Creation timestamp |
 
@@ -495,56 +411,37 @@ Tests use an in-memory SQLite database, so no external database is required. Eac
 | license_plate | String(20) | Detected plate |
 | is_authorized | Boolean | Authorization result |
 | confidence | Integer | OCR confidence (0-100) |
-| image_path | String(255) | Stored image path |
 | accessed_at | DateTime | Access timestamp |
 
 ## Technology Stack
 
 - **Framework**: FastAPI
+- **Admin Panel**: SQLAdmin
 - **Database**: PostgreSQL + SQLAlchemy
 - **ALPR Engine**: FastALPR (YOLO + OCR)
 - **Containerization**: Docker + Docker Compose
+- **Testing**: Pytest
 - **Python**: 3.12+
 
-## Performance Considerations
+## TODO
 
-- ALPR model is lazily loaded on first request
-- Database connections are pooled via SQLAlchemy
-- Async-ready with FastAPI (upgrade to async endpoints for higher throughput)
-- For GPU acceleration, use `fast-alpr[onnx-gpu]` instead of `fast-alpr[onnx]`
+- [x] Implement API authentication with building tokens
+- [x] Add authorization check in verify endpoints
+- [ ] Store access log images
+- [ ] Add rate limiting
+- [ ] Add webhook notifications
 
-## Security Best Practices
+## Security Notes (Production)
 
-1. **Change the default ADMIN_TOKEN** before deploying to production
-2. **Use HTTPS** in production (put behind a reverse proxy like nginx)
-3. **Regenerate building tokens** if compromised
-4. **Set strong database passwords** in production
-5. **Limit network access** to the database container
+1. **Change default credentials** in `.env`:
+   - `ADMIN_PASSWORD` - Use a strong password
+   - `SECRET_KEY` - Use a random 32+ character string
+   - `POSTGRES_PASSWORD` - Use a strong password
 
-## Troubleshooting
+2. **Use HTTPS** - Put behind nginx/traefik with SSL
 
-### ALPR not detecting plates
-- Ensure the image is clear and well-lit
-- Try higher resolution images
-- Check that the plate is not too small in the frame
-
-### Database connection errors
-- Verify PostgreSQL is running: `docker ps`
-- Check DATABASE_URL is correct
-- Ensure the database exists
-
-### Authentication errors
-- Verify the API key is correct
-- Check the building is active
-- Ensure you're using the correct header (`X-API-Key`)
+3. **Restrict network access** - Don't expose database port in production
 
 ## License
 
 MIT License
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request

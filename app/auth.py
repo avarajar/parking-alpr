@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Building
 
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    description="API token for building authentication. Get it from the admin panel.",
+)
 
 
 def get_current_building(
@@ -17,12 +20,6 @@ def get_current_building(
 
     Usage: Add as dependency to protected endpoints.
     """
-    if not api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing API key. Include 'X-API-Key' header.",
-        )
-
     building = (
         db.query(Building)
         .filter(Building.api_token == api_key, Building.is_active == True)
