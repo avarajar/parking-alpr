@@ -39,24 +39,23 @@ class TestListAccessLogs:
 
     def test_list_logs_ordered_by_date(self, client, building_headers, db_session, test_building):
         """Test that logs are ordered by date descending."""
-        import time
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
 
         log1 = AccessLog(
             building_id=test_building.id,
             license_plate="FIRST",
             is_authorized=True,
+            accessed_at=now - timedelta(hours=1),
         )
-        db_session.add(log1)
-        db_session.commit()
-
-        time.sleep(0.1)  # Ensure different timestamps
-
         log2 = AccessLog(
             building_id=test_building.id,
             license_plate="SECOND",
             is_authorized=True,
+            accessed_at=now,
         )
-        db_session.add(log2)
+        db_session.add_all([log1, log2])
         db_session.commit()
 
         response = client.get("/api/v1/logs", headers=building_headers)

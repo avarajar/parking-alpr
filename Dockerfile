@@ -1,12 +1,11 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -15,6 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
+COPY tests/ ./tests/
+COPY pytest.ini .
 
 # Expose port
 EXPOSE 8000

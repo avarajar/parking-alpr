@@ -38,24 +38,37 @@ A license plate recognition microservice for building parking management. Uses A
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd reconocimiento-placas
+git clone https://github.com/avarajar/parking-alpr.git
+cd parking-alpr
 ```
 
-2. Set environment variables:
+2. Build and start:
 ```bash
-cp .env.example .env
-# Edit .env and set a secure ADMIN_TOKEN
+make build
+make up
 ```
 
-3. Start the services:
+3. Access the API at `http://localhost:8000`
+
+### Makefile Commands
+
 ```bash
-docker-compose up --build
+make help           # Show all available commands
+make build          # Build Docker images
+make up             # Start all services
+make down           # Stop all services
+make logs           # View service logs
+make test           # Run tests in Docker
+make test-cov       # Run tests with coverage
+make shell          # Open shell in API container
+make db-shell       # Open PostgreSQL shell
+make clean          # Remove containers and volumes
+make health         # Check API health
+make create-building  # Create a test building
+make list-buildings   # List all buildings
 ```
 
-4. Access the API at `http://localhost:8000`
-
-### Local Development
+### Local Development (without Docker)
 
 1. Create a virtual environment:
 ```bash
@@ -377,6 +390,7 @@ reconocimiento-placas/
 ├── .gitignore
 ├── pytest.ini            # Pytest configuration
 ├── requirements.txt      # Python dependencies
+├── Makefile              # Development commands
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
